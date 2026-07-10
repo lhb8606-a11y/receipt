@@ -5,6 +5,8 @@ import json
 import io
 from pdf2image import convert_from_bytes
 from PIL import Image
+import datetime  # 날짜/시간 처리를 위해 추가
+import re        # 숫자 정제(정규식)를 위해 추가
 
 # =====================================================================
 # 🔑 Streamlit의 안전한 금고(Secrets)에서 키를 몰래 불러옵니다.
@@ -31,7 +33,6 @@ def analyze_receipt_with_gemini(image_obj):
     """
     
     try:
-        # 🎯 대마왕님 계정 전용 최신 'gemini-3.5-flash' 모델 적용!
         response = client.models.generate_content(
             model='gemini-3.5-flash',
             contents=[prompt_text, image_obj]
@@ -104,18 +105,43 @@ if st.button("AI 정보 추출 시작", type="primary"):
                 df = pd.DataFrame(all_extracted_data)
                 df = df[["파일이름", "날짜", "사업자 이름", "사업자 등록번호", "결제항목", "결제금액"]]
                 
+                # 🌟 결제금액 정제 로직: 문자열에서 숫자만 빼내어 진짜 정수(int)로 변환
+                def clean_amount(val):
+                    val = str(val)
+                    cleaned = re.sub(r'[^\d]', '', val) # 숫자가 아닌 모든 문자 제거
+                    return int(cleaned) if cleaned else 0
+                
+                df["결제금액"] = df["결제금액"].apply(clean_amount)
+                
                 st.success(f"🎉 완벽합니다! {len(all_extracted_data)}개의 데이터 추출을 완료했습니다.")
                 st.dataframe(df)
 
-                # 엑셀 다운로드
+                # 🌟 동적 파일명 생성 로직
+                if len(uploaded_files) == 1:
+                    # 파일이 1개일 경우: 원본 파일명 + _추출결과.xlsx
+                    base_name = uploaded_files[0].name.rsplit('.', 1)[0]
+                    download_filename = f"{base_name}_추출결과.xlsx"
+                else:
+                    # 파일이 2개 이상일 경우: 현재 날짜 및 시간으로 파일명 생성
+                    now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    download_filename = f"다중영수증추출_{now_str}.xlsx"
+
+                # 🌟 엑셀 저장 및 콤마(천 단위) 서식 강제 적용
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False, sheet_name='영수증추출')
+                    
+                    # F열(결제금액)에 엑셀 회계 쉼표 스타일(#,##0) 적용
+                    worksheet = writer.sheets['영수증추출']
+                    for cell in worksheet['F']:
+                        if cell.row != 1: # 첫 줄(헤더)은 제외
+                            cell.number_format = '#,##0'
+                            
                 excel_data = output.getvalue()
 
                 st.download_button(
                     label="⬇️ 추출된 엑셀 파일 다운로드",
                     data=excel_data,
-                    file_name="영수증_AI추출결과.xlsx",
+                    file_name=download_filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )

@@ -14,7 +14,7 @@ GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 # Gemini API 설정
 genai.configure(api_key=GEMINI_API_KEY)
 # 속도와 비용(무료) 측면에서 가장 효율적인 최신 Flash 모델 사용
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-pro')
 
 def analyze_receipt_with_gemini(image_obj):
     prompt_text = """

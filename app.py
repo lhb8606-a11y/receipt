@@ -1,108 +1,114 @@
 import streamlit as st
 import pandas as pd
-import pytesseract
-import cv2
-import numpy as np
-import re
+import google.generativeai as genai
+import json
+import io
 from pdf2image import convert_from_bytes
 from PIL import Image
-import io
 
-# 1. 이미지 전처리 (흑백 및 대비 최적화)
-def preprocess_pil_image(pil_img):
-    img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    return gray
+# =====================================================================
+# 🔑 Streamlit의 안전한 금고(Secrets)에서 키를 몰래 불러옵니다.
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+# =====================================================================
 
-# 2. 텍스트 정규식 추출
-def extract_info_from_text(text):
-    data = {"날짜": "", "사업자 이름": "", "사업자 등록번호": "", "결제항목": "", "결제금액": ""}
-    lines = text.split('\n')
-    lines = [line.strip() for line in lines if line.strip()]
+# Gemini API 설정
+genai.configure(api_key=GEMINI_API_KEY)
+# 속도와 비용(무료) 측면에서 가장 효율적인 최신 Flash 모델 사용
+model = genai.GenerativeModel('gemini-1.5-flash') 
 
-    date_pattern = re.compile(r'(20\d{2}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}일?)')
-    biz_num_pattern = re.compile(r'(\d{3}\s*-\s*\d{2}\s*-\s*\d{5})')
-    amount_pattern = re.compile(r'(합\s*계|결\s*제\s*금\s*액|받\s*을\s*금\s*액|승\s*인\s*금\s*액|총\s*액)[\s:;]*([\d,]+)\s*원?')
+def analyze_receipt_with_gemini(image_obj):
+    prompt_text = """
+    이 이미지에는 하나 또는 여러 개의 영수증이 있습니다. 
+    각 영수증을 분리하여 다음 정보를 추출하고, 반드시 JSON 배열(Array) 형태로만 반환하세요.
+    마크다운 코드 블록(```json 등)을 제외하고 순수한 JSON 문자열만 반환해야 합니다.
 
-    for i, line in enumerate(lines):
-        if "상호" in line or "가맹점명" in line:
-            biz_name = line.replace("상호", "").replace("가맹점명", "").replace(":", "").strip()
-            if biz_name: data["사업자 이름"] = biz_name
+    추출 항목:
+    - 날짜 (YYYY-MM-DD 형식으로 가능한 변환)
+    - 사업자 이름
+    - 사업자 등록번호
+    - 결제항목 (가장 대표적인 품목 1~2개 또는 '외식대', '주유비' 등으로 요약. 품목이 없다면 전체 금액에 대한 항목 기재)
+    - 결제금액 (숫자만, 콤마 제외)
+
+    특정 정보를 도저히 찾을 수 없다면 해당 값은 빈 문자열("")로 남겨주세요.
+    """
+    
+    try:
+        response = model.generate_content([prompt_text, image_obj])
+        result_text = response.text.strip()
         
-        if not data["사업자 이름"] and i < 3 and re.search(r'[가-힣]', line):
-            data["사업자 이름"] = line
+        # JSON 포맷팅 (마크다운 백틱 제거)
+        if result_text.startswith("```json"):
+            result_text = result_text[7:]
+        if result_text.endswith("```"):
+            result_text = result_text[:-3]
+            
+        return json.loads(result_text)
+    except Exception as e:
+        st.error(f"AI 분석 중 에러 발생: {e}")
+        return []
 
-        if not data["날짜"]:
-            date_match = date_pattern.search(line)
-            if date_match: data["날짜"] = date_match.group(1)
+# 웹사이트 UI 구성
+st.set_page_config(page_title="영수증 자동 인식기 (Pro)", page_icon="🧾", layout="centered")
+st.title("🧾 인공지능 영수증 자동 인식기 (Gemini Vision)")
+st.markdown("Google 최신 AI를 탑재하여 구겨진 영수증도 완벽하게 인식합니다. 캡처 이미지를 **Ctrl+V**로 바로 붙여넣으세요!")
 
-        if not data["사업자 등록번호"]:
-            biz_num_match = biz_num_pattern.search(line)
-            if biz_num_match: data["사업자 등록번호"] = biz_num_match.group(1)
-
-        amount_match = amount_pattern.search(line)
-        if amount_match:
-            data["결제금액"] = amount_match.group(2)
-
-    data["결제항목"] = "일반결제 (OCR수동확인)"
-    return data
-
-# 3. 웹사이트 UI 및 메인 로직 구성
-st.set_page_config(page_title="영수증 자동 인식기", page_icon="🧾", layout="centered")
-st.title("🧾 무료 로컬 영수증 자동 인식기")
-st.markdown("API 비용 없이 100% 무료로 동작합니다. 파일을 드래그 앤 드롭 하거나, **박스 안을 클릭한 뒤 Ctrl+V**로 캡처 이미지를 붙여넣으세요.")
-
-# Streamlit은 파일 업로더에서 직접 Ctrl+V 붙여넣기를 지원합니다!
 uploaded_files = st.file_uploader("📂 영수증 파일 업로드 (PDF, 이미지 여러 장 가능)", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
-if st.button("정보 추출 시작", type="primary"):
-    if not uploaded_files:
+if st.button("AI 정보 추출 시작", type="primary"):
+    if not GEMINI_API_KEY or GEMINI_API_KEY.startswith("AIzaSy-여기에"):
+        st.error("코드 상단에 올바른 Gemini API Key를 입력해주세요.")
+    elif not uploaded_files:
         st.warning("파일을 업로드하거나 이미지를 붙여넣어 주세요.")
     else:
-        with st.spinner("영수증을 분석 중입니다... 잠시만 기다려주세요 ⏳"):
+        with st.spinner("AI가 영수증을 꼼꼼히 읽고 있습니다... 잠시만 기다려주세요 ⏳"):
             all_extracted_data = []
 
             for file in uploaded_files:
                 file_name = file.name
                 ext = file_name.split('.')[-1].lower()
-                extracted_texts = []
+                pil_images = []
 
+                # 1. 파일을 이미지로 변환
                 if ext == 'pdf':
                     try:
-                        # Streamlit 특성에 맞게 메모리에서 직접 PDF 변환
                         pages = convert_from_bytes(file.read())
-                        for page in pages:
-                            processed_img = preprocess_pil_image(page)
-                            text = pytesseract.image_to_string(processed_img, lang='kor+eng')
-                            extracted_texts.append(text)
+                        pil_images.extend(pages)
                     except Exception as e:
                         st.error(f"PDF 변환 에러 ({file_name}): {e}")
                 else:
                     try:
                         img = Image.open(file)
-                        processed_img = preprocess_pil_image(img)
-                        text = pytesseract.image_to_string(processed_img, lang='kor+eng')
-                        extracted_texts.append(text)
+                        # 이미지를 RGB 모드로 변환 (알파 채널 제거)
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        pil_images.append(img)
                     except Exception as e:
-                        st.error(f"이미지 변환 에러 ({file_name}): {e}")
+                        st.error(f"이미지 열기 에러 ({file_name}): {e}")
 
-                for text in extracted_texts:
-                    if text.strip():
-                        info = extract_info_from_text(text)
-                        info["파일이름"] = file_name
-                        all_extracted_data.append(info)
+                # 2. 각 이미지를 Gemini AI에 전송하여 분석
+                for img in pil_images:
+                    receipts_data = analyze_receipt_with_gemini(img)
+                    
+                    for data in receipts_data:
+                        all_extracted_data.append({
+                            "파일이름": file_name,
+                            "날짜": data.get("날짜", ""),
+                            "사업자 이름": data.get("사업자 이름", ""),
+                            "사업자 등록번호": data.get("사업자 등록번호", ""),
+                            "결제항목": data.get("결제항목", ""),
+                            "결제금액": data.get("결제금액", "")
+                        })
 
             if not all_extracted_data:
-                st.error("추출된 텍스트가 없습니다. 이미지가 선명한지 다시 확인해주세요.")
+                st.error("추출된 데이터가 없습니다.")
             else:
                 df = pd.DataFrame(all_extracted_data)
                 df = df[["파일이름", "날짜", "사업자 이름", "사업자 등록번호", "결제항목", "결제금액"]]
                 
-                st.success(f"🎉 성공적으로 {len(all_extracted_data)}개의 데이터 추출을 완료했습니다!")
-                st.dataframe(df) # 화면에 추출 결과 표 보여주기
+                st.success(f"🎉 완벽합니다! {len(all_extracted_data)}개의 데이터 추출을 완료했습니다.")
+                st.dataframe(df)
 
-                # 엑셀 파일 생성 (메모리에서 바로 생성하여 다운로드 속도 최적화)
+                # 엑셀 다운로드
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False, sheet_name='영수증추출')
@@ -111,6 +117,6 @@ if st.button("정보 추출 시작", type="primary"):
                 st.download_button(
                     label="⬇️ 추출된 엑셀 파일 다운로드",
                     data=excel_data,
-                    file_name="영수증_무료추출결과.xlsx",
+                    file_name="영수증_AI추출결과.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )

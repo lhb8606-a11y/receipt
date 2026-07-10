@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import google.generativeai as genai
+from google import genai
 import json
 import io
 from pdf2image import convert_from_bytes
@@ -11,10 +11,8 @@ from PIL import Image
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 # =====================================================================
 
-# Gemini API 설정
-genai.configure(api_key=GEMINI_API_KEY)
-# 속도와 비용(무료) 측면에서 가장 효율적인 최신 Flash 모델 사용
-model = genai.GenerativeModel('gemini-1.5-pro')
+# 🚀 2026년형 최신 구글 GenAI 클라이언트 엔진 장착!
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def analyze_receipt_with_gemini(image_obj):
     prompt_text = """
@@ -33,7 +31,11 @@ def analyze_receipt_with_gemini(image_obj):
     """
     
     try:
-        response = model.generate_content([prompt_text, image_obj])
+        # 💡 최신 클라이언트 문법과 gemini-2.5-flash 적용
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt_text, image_obj]
+        )
         result_text = response.text.strip()
         
         # JSON 포맷팅 (마크다운 백틱 제거)
@@ -50,13 +52,13 @@ def analyze_receipt_with_gemini(image_obj):
 # 웹사이트 UI 구성
 st.set_page_config(page_title="영수증 자동 인식기 (Pro)", page_icon="🧾", layout="centered")
 st.title("🧾 인공지능 영수증 자동 인식기 (Gemini Vision)")
-st.markdown("Google 최신 AI를 탑재하여 구겨진 영수증도 완벽하게 인식합니다. 캡처 이미지를 **Ctrl+V**로 바로 붙여넣으세요!")
+st.markdown("Google 최신 AI를 탑재하여 구겨진 영수증도 완벽하게 인식합니다. 캡처 이미지를 **아무 곳이나 클릭 후 Ctrl+V**로 바로 붙여넣으세요!")
 
 uploaded_files = st.file_uploader("📂 영수증 파일 업로드 (PDF, 이미지 여러 장 가능)", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
 if st.button("AI 정보 추출 시작", type="primary"):
-    if not GEMINI_API_KEY or GEMINI_API_KEY.startswith("AIzaSy-여기에"):
-        st.error("코드 상단에 올바른 Gemini API Key를 입력해주세요.")
+    if not GEMINI_API_KEY:
+        st.error("올바른 Gemini API Key를 입력해주세요.")
     elif not uploaded_files:
         st.warning("파일을 업로드하거나 이미지를 붙여넣어 주세요.")
     else:
@@ -68,7 +70,6 @@ if st.button("AI 정보 추출 시작", type="primary"):
                 ext = file_name.split('.')[-1].lower()
                 pil_images = []
 
-                # 1. 파일을 이미지로 변환
                 if ext == 'pdf':
                     try:
                         pages = convert_from_bytes(file.read())
@@ -78,14 +79,12 @@ if st.button("AI 정보 추출 시작", type="primary"):
                 else:
                     try:
                         img = Image.open(file)
-                        # 이미지를 RGB 모드로 변환 (알파 채널 제거)
                         if img.mode != 'RGB':
                             img = img.convert('RGB')
                         pil_images.append(img)
                     except Exception as e:
                         st.error(f"이미지 열기 에러 ({file_name}): {e}")
 
-                # 2. 각 이미지를 Gemini AI에 전송하여 분석
                 for img in pil_images:
                     receipts_data = analyze_receipt_with_gemini(img)
                     
@@ -120,5 +119,3 @@ if st.button("AI 정보 추출 시작", type="primary"):
                     file_name="영수증_AI추출결과.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
-

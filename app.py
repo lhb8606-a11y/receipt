@@ -91,8 +91,8 @@ document.addEventListener('paste', async (e) => {
 components.html(js_paste_injector, height=0, width=0)
 
 # 세션 상태 초기화 (붙여넣은 이미지들을 누적 보관하기 위함)
-if "pasted_images" not in st.st_session_state:
-    st.st_session_state.pasted_images = []
+if "pasted_images" not in st.session_state:
+    st.session_state.pasted_images = []
 
 st.info("💡 요령: 화면 빈 곳 아무데나 마우스로 한 번 클릭한 뒤, 키보드로 **Ctrl + V**를 누르면 캡처한 영수증이 아래 업로드 박스에 쏙 들어갑니다!")
 

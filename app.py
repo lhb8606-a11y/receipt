@@ -33,7 +33,7 @@ def analyze_receipt_with_gemini(image_obj):
     try:
         # 💡 최신 클라이언트 문법과 gemini-2.5-flash 적용
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=[prompt_text, image_obj]
         )
         result_text = response.text.strip()

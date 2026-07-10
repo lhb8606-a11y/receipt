@@ -5,8 +5,9 @@ import json
 import io
 from pdf2image import convert_from_bytes
 from PIL import Image
-import datetime  # 날짜/시간 처리를 위해 추가
-import re        # 숫자 정제(정규식)를 위해 추가
+import datetime
+import re
+import streamlit.components.v1 as components  # 웹 클립보드 제어를 위해 추가
 
 # =====================================================================
 # 🔑 Streamlit의 안전한 금고(Secrets)에서 키를 몰래 불러옵니다.
@@ -23,28 +24,22 @@ def analyze_receipt_with_gemini(image_obj):
     마크다운 코드 블록(```json 등)을 제외하고 순수한 JSON 문자열만 반환해야 합니다.
 
     추출 항목:
-    - 날짜 (YYYY-MM-DD 형식으로 가능한 변환)
+    - 날짜 (YYYY-MM-DD 형식으로 변환)
     - 사업자 이름
     - 사업자 등록번호
-    - 결제항목 (가장 대표적인 품목 1~2개 또는 '외식대', '주유비' 등으로 요약. 품목이 없다면 전체 금액에 대한 항목 기재)
+    - 결제항목 (가장 대표적인 품목 1~2개 또는 '외식대', '주유비' 등으로 요약)
     - 결제금액 (숫자만, 콤마 제외)
-
-    특정 정보를 도저히 찾을 수 없다면 해당 값은 빈 문자열("")로 남겨주세요.
     """
-    
     try:
         response = client.models.generate_content(
             model='gemini-3.5-flash',
             contents=[prompt_text, image_obj]
         )
         result_text = response.text.strip()
-        
-        # JSON 포맷팅 (마크다운 백틱 제거)
         if result_text.startswith("```json"):
             result_text = result_text[7:]
         if result_text.endswith("```"):
             result_text = result_text[:-3]
-            
         return json.loads(result_text)
     except Exception as e:
         st.error(f"AI 분석 중 에러 발생: {e}")
@@ -53,9 +48,56 @@ def analyze_receipt_with_gemini(image_obj):
 # 웹사이트 UI 구성
 st.set_page_config(page_title="영수증 자동 인식기 (Pro)", page_icon="🧾", layout="centered")
 st.title("🧾 인공지능 영수증 자동 인식기 (Gemini Vision)")
-st.markdown("Google 최신 AI를 탑재하여 구겨진 영수증도 완벽하게 인식합니다. 캡처 이미지를 **아무 곳이나 클릭 후 Ctrl+V**로 바로 붙여넣으세요!")
+st.markdown("Google 최신 AI를 탑재하여 구겨진 영수증도 완벽하게 인식합니다.")
 
-uploaded_files = st.file_uploader("📂 영수증 파일 업로드 (PDF, 이미지 여러 장 가능)", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True)
+# 🌟 [핵심 기능] 클립보드 Ctrl+V 이미지를 강제로 낚아채는 자바스크립트 인젝션
+# 이 코드가 웹브라우저 전체의 붙여넣기 이벤트를 감시하여 스트림릿 업로더와 연결해줍니다.
+js_paste_injector = """
+<script>
+document.addEventListener('paste', async (e) => {
+    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    for (const item of items) {
+        if (item.type.indexOf('image') === 0) {
+            const blob = item.getAsFile();
+            
+            // 스트림릿의 파일 업로더(input[type=file])를 강제로 찾아냅니다.
+            const fileInput = parent.document.querySelector('input[type="file"]');
+            if (fileInput) {
+                const dataTransfer = new DataTransfer();
+                
+                // 기존에 이미 업로드된 파일들이 있다면 유지하기 위해 복사
+                if (fileInput.files.length > 0) {
+                    for (let i=0; i < fileInput.files.length; i++) {
+                        dataTransfer.items.add(fileInput.files[i]);
+                    }
+                }
+                
+                // 가상의 파일 객체를 만들어서 클립보드 이미지를 추가
+                const file = new File([blob], "pasted_image_" + new Date().getTime() + ".png", {type: blob.type});
+                dataTransfer.items.add(file);
+                
+                fileInput.files = dataTransfer.files;
+                
+                // 스트림릿 서버에 파일이 새로 들어왔음을 강제로 신호 보냅니다.
+                fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log("✅ 클립보드 이미지가 성공적으로 웹사이트에 주입되었습니다.");
+            }
+        }
+    }
+});
+</script>
+"""
+# 화면에 보이지 않는 백그라운드 스크립트로 실행 파일 심기
+components.html(js_paste_injector, height=0, width=0)
+
+# 세션 상태 초기화 (붙여넣은 이미지들을 누적 보관하기 위함)
+if "pasted_images" not in st.st_session_state:
+    st.st_session_state.pasted_images = []
+
+st.info("💡 요령: 화면 빈 곳 아무데나 마우스로 한 번 클릭한 뒤, 키보드로 **Ctrl + V**를 누르면 캡처한 영수증이 아래 업로드 박스에 쏙 들어갑니다!")
+
+# 파일 업로더 (자바스크립트가 이 박스를 조종합니다)
+uploaded_files = st.file_uploader("📂 영수증 파일 업로드 박스", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
 if st.button("AI 정보 추출 시작", type="primary"):
     if not GEMINI_API_KEY:
@@ -88,7 +130,6 @@ if st.button("AI 정보 추출 시작", type="primary"):
 
                 for img in pil_images:
                     receipts_data = analyze_receipt_with_gemini(img)
-                    
                     for data in receipts_data:
                         all_extracted_data.append({
                             "파일이름": file_name,
@@ -105,36 +146,30 @@ if st.button("AI 정보 추출 시작", type="primary"):
                 df = pd.DataFrame(all_extracted_data)
                 df = df[["파일이름", "날짜", "사업자 이름", "사업자 등록번호", "결제항목", "결제금액"]]
                 
-                # 🌟 결제금액 정제 로직: 문자열에서 숫자만 빼내어 진짜 정수(int)로 변환
+                # 금액 정제 및 천 단위 콤마
                 def clean_amount(val):
                     val = str(val)
-                    cleaned = re.sub(r'[^\d]', '', val) # 숫자가 아닌 모든 문자 제거
+                    cleaned = re.sub(r'[^\d]', '', val)
                     return int(cleaned) if cleaned else 0
-                
                 df["결제금액"] = df["결제금액"].apply(clean_amount)
                 
                 st.success(f"🎉 완벽합니다! {len(all_extracted_data)}개의 데이터 추출을 완료했습니다.")
                 st.dataframe(df)
 
-                # 🌟 동적 파일명 생성 로직
+                # 동적 파일명 생성
                 if len(uploaded_files) == 1:
-                    # 파일이 1개일 경우: 원본 파일명 + _추출결과.xlsx
                     base_name = uploaded_files[0].name.rsplit('.', 1)[0]
                     download_filename = f"{base_name}_추출결과.xlsx"
                 else:
-                    # 파일이 2개 이상일 경우: 현재 날짜 및 시간으로 파일명 생성
                     now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     download_filename = f"다중영수증추출_{now_str}.xlsx"
 
-                # 🌟 엑셀 저장 및 콤마(천 단위) 서식 강제 적용
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False, sheet_name='영수증추출')
-                    
-                    # F열(결제금액)에 엑셀 회계 쉼표 스타일(#,##0) 적용
                     worksheet = writer.sheets['영수증추출']
                     for cell in worksheet['F']:
-                        if cell.row != 1: # 첫 줄(헤더)은 제외
+                        if cell.row != 1:
                             cell.number_format = '#,##0'
                             
                 excel_data = output.getvalue()

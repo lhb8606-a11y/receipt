@@ -120,3 +120,5 @@ if st.button("AI 정보 추출 시작", type="primary"):
                     file_name="영수증_AI추출결과.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
+

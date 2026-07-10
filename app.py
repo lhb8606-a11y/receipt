@@ -7,14 +7,8 @@ from pdf2image import convert_from_bytes
 from PIL import Image
 import datetime
 import re
-import streamlit.components.v1 as components  # 웹 클립보드 제어를 위해 추가
 
-# =====================================================================
-# 🔑 Streamlit의 안전한 금고(Secrets)에서 키를 몰래 불러옵니다.
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-# =====================================================================
-
-# 🚀 최신 구글 GenAI 클라이언트 엔진 장착!
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def analyze_receipt_with_gemini(image_obj):
@@ -45,69 +39,20 @@ def analyze_receipt_with_gemini(image_obj):
         st.error(f"AI 분석 중 에러 발생: {e}")
         return []
 
-# 웹사이트 UI 구성
 st.set_page_config(page_title="영수증 자동 인식기 (Pro)", page_icon="🧾", layout="centered")
 st.title("🧾 인공지능 영수증 자동 인식기 (Gemini Vision)")
 st.markdown("Google 최신 AI를 탑재하여 구겨진 영수증도 완벽하게 인식합니다.")
 
-# 🌟 [핵심 기능] 클립보드 Ctrl+V 이미지를 강제로 낚아채는 자바스크립트 인젝션
-# 이 코드가 웹브라우저 전체의 붙여넣기 이벤트를 감시하여 스트림릿 업로더와 연결해줍니다.
-js_paste_injector = """
-<script>
-document.addEventListener('paste', async (e) => {
-    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-    for (const item of items) {
-        if (item.type.indexOf('image') === 0) {
-            const blob = item.getAsFile();
-            
-            // 스트림릿의 파일 업로더(input[type=file])를 강제로 찾아냅니다.
-            const fileInput = parent.document.querySelector('input[type="file"]');
-            if (fileInput) {
-                const dataTransfer = new DataTransfer();
-                
-                // 기존에 이미 업로드된 파일들이 있다면 유지하기 위해 복사
-                if (fileInput.files.length > 0) {
-                    for (let i=0; i < fileInput.files.length; i++) {
-                        dataTransfer.items.add(fileInput.files[i]);
-                    }
-                }
-                
-                // 가상의 파일 객체를 만들어서 클립보드 이미지를 추가
-                const file = new File([blob], "pasted_image_" + new Date().getTime() + ".png", {type: blob.type});
-                dataTransfer.items.add(file);
-                
-                fileInput.files = dataTransfer.files;
-                
-                // 스트림릿 서버에 파일이 새로 들어왔음을 강제로 신호 보냅니다.
-                fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-                console.log("✅ 클립보드 이미지가 성공적으로 웹사이트에 주입되었습니다.");
-            }
-        }
-    }
-});
-</script>
-"""
-# 화면에 보이지 않는 백그라운드 스크립트로 실행 파일 심기
-components.html(js_paste_injector, height=0, width=0)
-
-# 세션 상태 초기화 (붙여넣은 이미지들을 누적 보관하기 위함)
-if "pasted_images" not in st.session_state:
-    st.session_state.pasted_images = []
-
-st.info("💡 요령: 화면 빈 곳 아무데나 마우스로 한 번 클릭한 뒤, 키보드로 **Ctrl + V**를 누르면 캡처한 영수증이 아래 업로드 박스에 쏙 들어갑니다!")
-
-# 파일 업로더 (자바스크립트가 이 박스를 조종합니다)
 uploaded_files = st.file_uploader("📂 영수증 파일 업로드 박스", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
 if st.button("AI 정보 추출 시작", type="primary"):
     if not GEMINI_API_KEY:
         st.error("올바른 Gemini API Key를 입력해주세요.")
     elif not uploaded_files:
-        st.warning("파일을 업로드하거나 이미지를 붙여넣어 주세요.")
+        st.warning("파일을 업로드해주세요.")
     else:
-        with st.spinner("AI가 영수증을 꼼꼼히 읽고 있습니다... 잠시만 기다려주세요 ⏳"):
+        with st.spinner("AI가 영수증을 분석 중입니다... ⏳"):
             all_extracted_data = []
-
             for file in uploaded_files:
                 file_name = file.name
                 ext = file_name.split('.')[-1].lower()
@@ -118,7 +63,7 @@ if st.button("AI 정보 추출 시작", type="primary"):
                         pages = convert_from_bytes(file.read())
                         pil_images.extend(pages)
                     except Exception as e:
-                        st.error(f"PDF 변환 에러 ({file_name}): {e}")
+                        st.error(f"PDF 변환 에러: {e}")
                 else:
                     try:
                         img = Image.open(file)
@@ -126,7 +71,7 @@ if st.button("AI 정보 추출 시작", type="primary"):
                             img = img.convert('RGB')
                         pil_images.append(img)
                     except Exception as e:
-                        st.error(f"이미지 열기 에러 ({file_name}): {e}")
+                        st.error(f"이미지 열기 에러: {e}")
 
                 for img in pil_images:
                     receipts_data = analyze_receipt_with_gemini(img)
@@ -140,23 +85,19 @@ if st.button("AI 정보 추출 시작", type="primary"):
                             "결제금액": data.get("결제금액", "")
                         })
 
-            if not all_extracted_data:
-                st.error("추출된 데이터가 없습니다.")
-            else:
+            if all_extracted_data:
                 df = pd.DataFrame(all_extracted_data)
                 df = df[["파일이름", "날짜", "사업자 이름", "사업자 등록번호", "결제항목", "결제금액"]]
                 
-                # 금액 정제 및 천 단위 콤마
                 def clean_amount(val):
                     val = str(val)
                     cleaned = re.sub(r'[^\d]', '', val)
                     return int(cleaned) if cleaned else 0
                 df["결제금액"] = df["결제금액"].apply(clean_amount)
                 
-                st.success(f"🎉 완벽합니다! {len(all_extracted_data)}개의 데이터 추출을 완료했습니다.")
+                st.success(f"🎉 {len(all_extracted_data)}개의 데이터 추출 완료!")
                 st.dataframe(df)
 
-                # 동적 파일명 생성
                 if len(uploaded_files) == 1:
                     base_name = uploaded_files[0].name.rsplit('.', 1)[0]
                     download_filename = f"{base_name}_추출결과.xlsx"
@@ -173,10 +114,4 @@ if st.button("AI 정보 추출 시작", type="primary"):
                             cell.number_format = '#,##0'
                             
                 excel_data = output.getvalue()
-
-                st.download_button(
-                    label="⬇️ 추출된 엑셀 파일 다운로드",
-                    data=excel_data,
-                    file_name=download_filename,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button("⬇️ 추출된 엑셀 파일 다운로드", data=excel_data, file_name=download_filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

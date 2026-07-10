@@ -11,7 +11,7 @@ from PIL import Image
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 # =====================================================================
 
-# 🚀 2026년형 최신 구글 GenAI 클라이언트 엔진 장착!
+# 🚀 최신 구글 GenAI 클라이언트 엔진 장착!
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def analyze_receipt_with_gemini(image_obj):
@@ -31,9 +31,9 @@ def analyze_receipt_with_gemini(image_obj):
     """
     
     try:
-        # 💡 최신 클라이언트 문법과 gemini-2.5-flash 적용
+        # 🎯 대마왕님 계정 전용 최신 'gemini-3.5-flash' 모델 적용!
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-3.5-flash',
             contents=[prompt_text, image_obj]
         )
         result_text = response.text.strip()
